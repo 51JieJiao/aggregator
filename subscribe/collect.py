@@ -5,6 +5,7 @@
 
 import argparse
 import itertools
+import json
 import os
 import random
 import re
@@ -30,6 +31,62 @@ import subconverter
 PATH = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
 
 DATA_BASE = os.path.join(PATH, "data")
+BLACKLIST_FILE = os.path.join(DATA_BASE, "domain-blacklist.json")
+BLACKLIST_THRESHOLD = 2
+BLACKLIST_HOURS = 24
+
+
+def load_domain_blacklist(filepath: str = BLACKLIST_FILE) -> dict:
+    if not os.path.exists(filepath) or not os.path.isfile(filepath):
+        return {}
+
+    try:
+        with open(filepath, "r", encoding="utf8") as f:
+            data = json.load(f)
+            return data if isinstance(data, dict) else {}
+    except:
+        return {}
+
+
+def save_domain_blacklist(records: dict, filepath: str = BLACKLIST_FILE) -> None:
+    try:
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        with open(filepath, "w", encoding="utf8") as f:
+            json.dump(records or {}, f, ensure_ascii=False, indent=2, sort_keys=True)
+    except:
+        logger.error("save domain blacklist failed")
+
+
+def normalize_domain(url: str) -> str:
+    return utils.extract_domain(url=url, include_protocal=True).lower()
+
+
+def is_domain_blacklisted(domain: str, blacklist: dict, now: float | None = None) -> bool:
+    if not domain or not blacklist:
+        return False
+
+    now = time.time() if now is None else now
+    item = blacklist.get(domain, {})
+    banned_until = float(item.get("banned_until", 0) or 0)
+    return banned_until > now
+
+
+def mark_domain_result(domain: str, success: bool, blacklist: dict, now: float | None = None) -> None:
+    if not domain:
+        return
+
+    now = time.time() if now is None else now
+    item = blacklist.get(domain, {"failures": 0, "banned_until": 0})
+
+    if success:
+        item["failures"] = 0
+        item["banned_until"] = 0
+    else:
+        item["failures"] = int(item.get("failures", 0) or 0) + 1
+        if item["failures"] >= BLACKLIST_THRESHOLD:
+            item["banned_until"] = int(now + BLACKLIST_HOURS * 3600)
+
+    blacklist[domain] = item
 
 
 def assign(
@@ -188,7 +245,15 @@ def assign(
     if overwrite:
         crawl.save_candidates(candidates=domains, filepath=fullpath, delimiter=delimiter)
 
+    blacklist = load_domain_blacklist()
+    now = time.time()
+
     for domain, param in domains.items():
+        domain_key = normalize_domain(domain)
+        if is_domain_blacklisted(domain_key, blacklist, now):
+            logger.info(f"skip blacklisted domain: {domain_key}")
+            continue
+
         name = crawl.naming_task(url=domain)
         tasks.append(
             TaskConfig(
@@ -256,6 +321,20 @@ def aggregate(args: argparse.Namespace) -> None:
         os.remove(generate_conf)
 
     results = utils.multi_thread_run(func=workflow.executewrapper, tasks=tasks, num_threads=args.num)
+
+    blacklist = load_domain_blacklist()
+    now = time.time()
+    for i, result in enumerate(results):
+        task = tasks[i] if i < len(tasks) else None
+        if not task or task.sub:
+            continue
+
+        domain_key = normalize_domain(task.domain)
+        count = len(result[1]) if result and len(result) > 1 and isinstance(result[1], list) else 0
+        mark_domain_result(domain_key, count > 0, blacklist, now)
+
+    save_domain_blacklist(blacklist)
+
     proxies = list(itertools.chain.from_iterable([x[1] for x in results if x]))
 
     if len(proxies) == 0:
