@@ -42,7 +42,14 @@ def assign(
     num_threads: int = 0,
     **kwargs,
 ) -> list[TaskConfig]:
-    def load_exist(username: str, gist_id: str, access_token: str, filename: str) -> list[str]:
+    def load_exist(
+        username: str,
+        gist_id: str,
+        access_token: str,
+        filename: str,
+        remain: float = 0,
+        spare_time: float = 0,
+    ) -> list[str]:
         if not filename:
             return []
 
@@ -69,9 +76,10 @@ def assign(
 
         # 过滤已过期订阅并返回
         links = list(subscriptions)
+        tasks = [[x, 2, remain, spare_time] for x in links]
         results = utils.multi_thread_run(
             func=crawl.check_status,
-            tasks=links,
+            tasks=tasks,
             num_threads=num_threads,
             show_progress=display,
         )
@@ -104,9 +112,11 @@ def assign(
     gist_id = utils.trim(kwargs.get("gist_id", ""))
     username = utils.trim(kwargs.get("username", ""))
     chuck = kwargs.get("chuck", False)
+    life = max(0, kwargs.get("life", 0))
+    traffic = max(0, kwargs.get("flow", 0))
 
     # 加载已有订阅
-    subscriptions = load_exist(username, gist_id, access_token, subscribes_file)
+    subscriptions = load_exist(username, gist_id, access_token, subscribes_file, traffic, life)
     logger.info(f"load exists subscription finished, count: {len(subscriptions)}")
 
     # 是否允许特殊协议
@@ -229,6 +239,8 @@ def aggregate(args: argparse.Namespace) -> None:
         access_token=access_token,
         subscribes_file=subscribes_file,
         customize_link=args.yourself,
+        life=args.life,
+        flow=args.flow,
     )
 
     if not tasks:
@@ -298,7 +310,7 @@ def aggregate(args: argparse.Namespace) -> None:
             sys.exit(0)
 
     subscriptions = set()
-    for p in proxies:
+    for p in nodes:
         # 移除无用的标记
         p.pop("chatgpt", False)
         p.pop("liveness", True)
@@ -350,6 +362,11 @@ def aggregate(args: argparse.Namespace) -> None:
         os.remove(supplier)
     else:
         logger.error(f"all targets convert failed, you can view the temporary file: {supplier}")
+        sys.exit(1)
+
+    min_nodes = max(1, int(os.environ.get("MIN_NODES", "4")))
+    if len(nodes) < min_nodes:
+        logger.error(f"abort upload because usable proxies too few, found={len(nodes)}, require>={min_nodes}")
         sys.exit(1)
 
     logger.info(f"found {len(nodes)} proxies, save it to {list(records.values())}")

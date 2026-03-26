@@ -1351,7 +1351,7 @@ def _parse_yaml_proxies(content: str) -> list | None:
 
 def is_expired(header: str, remain: float = 0, spare_time: float = 0, tolerance: float = 0) -> tuple[bool, bool]:
     if utils.isblank(header):
-        return True, False
+        return remain <= 0 and spare_time <= 0, False
 
     remain, spare_time, tolerance = (
         max(0, remain),

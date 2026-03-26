@@ -1,8 +1,5 @@
 name: Refresh
 on:
-  # performed every two hours
-  schedule:
-    - cron: "0 */2 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -65,7 +62,9 @@ jobs:
           fi
 
       - name: Refresh
-        run: python -u subscribe/collect.py --all --refresh --overwrite --skip --targets singbox
+        env:
+          MIN_NODES: "4"
+        run: python -u subscribe/collect.py --all --refresh --targets singbox -n 8 --delay 8000
 
       - name: Timestamp
         run: date
