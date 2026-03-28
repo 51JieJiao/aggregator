@@ -189,9 +189,11 @@ def assign(
         else []
     )
 
-    # 仅更新已有订阅
-    if tasks and kwargs.get("refresh", False):
-        logger.info("skip registering new accounts, will use existing subscriptions for refreshing")
+    # refresh 模式只复用已有订阅，不退化为全量爬取新站点
+    if kwargs.get("refresh", False):
+        logger.info(
+            f"refresh mode enabled, will only reuse existing subscriptions for refreshing, count: {len(tasks)}"
+        )
         return tasks
 
     domains, delimiter = {}, "@#@#"
@@ -314,8 +316,9 @@ def aggregate(args: argparse.Namespace) -> None:
 
     # 已有订阅已经做过过期检查，无需再测
     old_subscriptions = set([t.sub for t in tasks if t.sub])
+    initial_task_total = len(tasks)
 
-    logger.info(f"start generate subscribes information, tasks: {len(tasks)}")
+    logger.info(f"start generate subscribes information, tasks: {initial_task_total}")
     generate_conf = os.path.join(PATH, "subconverter", "generate.ini")
     if os.path.exists(generate_conf) and os.path.isfile(generate_conf):
         os.remove(generate_conf)
@@ -445,8 +448,13 @@ def aggregate(args: argparse.Namespace) -> None:
 
     min_nodes = max(1, int(os.environ.get("MIN_NODES", "4")))
     if len(nodes) < min_nodes:
-        logger.error(f"abort upload because usable proxies too few, found={len(nodes)}, require>={min_nodes}")
-        sys.exit(1)
+        if old_subscriptions:
+            logger.warning(
+                f"usable proxies too few for fresh publish, found={len(nodes)}, require>={min_nodes}; keep existing subscriptions only"
+            )
+        else:
+            logger.error(f"abort upload because usable proxies too few, found={len(nodes)}, require>={min_nodes}")
+            sys.exit(1)
 
     logger.info(f"found {len(nodes)} proxies, save it to {list(records.values())}")
 
@@ -491,10 +499,22 @@ def aggregate(args: argparse.Namespace) -> None:
                     if lines:
                         files[k] = {"content": lines, "filename": k}
 
-        if urls:
-            files[subscribes_file] = {"content": "\n".join(urls), "filename": subscribes_file}
+    if urls:
+        files[subscribes_file] = {"content": "\n".join(urls), "filename": subscribes_file}
 
-        if files:
+        summary = {
+            "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "mode": "refresh" if args.refresh else "collect",
+            "task_total": initial_task_total,
+            "old_subscription_total": len(old_subscriptions),
+            "proxy_total": len(nodes),
+            "subscription_total": len(urls),
+            "min_nodes_required": min_nodes,
+            "used_existing_only": len(nodes) < min_nodes and len(old_subscriptions) > 0,
+        }
+        files["summary.json"] = {"content": json.dumps(summary, ensure_ascii=False, indent=2), "filename": "summary.json"}
+
+    if files:
             push_client = push.PushToGist(token=access_token)
 
             # 上传
