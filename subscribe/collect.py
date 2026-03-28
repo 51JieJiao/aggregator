@@ -515,14 +515,16 @@ def aggregate(args: argparse.Namespace) -> None:
         files["summary.json"] = {"content": json.dumps(summary, ensure_ascii=False, indent=2), "filename": "summary.json"}
 
     if files:
-            push_client = push.PushToGist(token=access_token)
+        push_client = push.PushToGist(token=access_token)
 
-            # 上传
-            success = push_client.push_to(content="", config=config, payload={"files": files}, group="collect")
-            if success:
-                logger.info(f"upload proxies and subscriptions to gist successed")
-            else:
-                logger.error(f"upload proxies and subscriptions to gist failed")
+        # 上传
+        success = push_client.push_to(content="", config=config, payload={"files": files}, group="collect")
+        if success:
+            logger.info(f"upload proxies and subscriptions to gist successed")
+        else:
+            logger.error(f"upload proxies and subscriptions to gist failed")
+            workflow.cleanup(workspace, [])
+            sys.exit(1)
 
     # 清理工作空间
     workflow.cleanup(workspace, [])
